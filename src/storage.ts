@@ -21,6 +21,7 @@
  *   SOFTWARE.
  */
 
+import { browser } from "webextension-polyfill-ts"
 import { extractMultipleShortlinkNames } from "./command"
 import { openUrlsInTabs } from "./omnibox"
 import { EditMode } from "./popup"
@@ -28,7 +29,7 @@ import { Delays, Messages, showToast, triggerAutoCloseWindowWithDelay } from "./
 import { Shortlink, Urls } from "./types"
 
 export async function getAllShortlinks(): Promise<Shortlink[]> {
-  const result: any = await chrome.storage.sync.get(null)
+  const result: any = await browser.storage.sync.get(null)
 
   const allShortlinks: Shortlink[] = []
   for (const key in result) {
@@ -58,11 +59,7 @@ export async function saveToSyncStorage(key: string, value: Urls): Promise<void>
     [key]: value,
   }
 
-  return new Promise((resolve, reject) => {
-    chrome.storage.sync.set(newShortlinkObject, () => {
-      resolve()
-    })
-  })
+  return await browser.storage.sync.set(newShortlinkObject)
 }
 
 export async function tryToSaveShortlink(newShortlinkName: string) {
@@ -72,7 +69,7 @@ export async function tryToSaveShortlink(newShortlinkName: string) {
   const urls = highlightedTabs.map((tab) => tab.url)
 
   // Check if the shortlink already exists in sync storage.
-  const existingValue: Urls = await getFromSyncStorage(newShortlinkName)
+  const existingValue: Urls | undefined = await getFromSyncStorage(newShortlinkName)
 
   if (existingValue !== undefined && existingValue.length > 0) {
     // Shortlink already exists, ask the user if they want to overwrite it.
@@ -186,34 +183,21 @@ export async function editShortlink(shortlinkName: string) {
 }
 
 export async function getUrlsForShortlinkName(shortlinkName: string): Promise<Urls> {
-  try {
-    const result: Urls = await getFromSyncStorage(shortlinkName)
-    console.log("getUrlsForShortlinkName: ", shortlinkName)
-    console.log("result: ", result)
-    return result
-  } catch (error) {
-    console.error(error)
-    return []
+  const result: Urls | undefined = await getFromSyncStorage(shortlinkName)
+  return result ?? []
+}
+
+export async function removeFromSyncStorage(key: string): Promise<void> {
+  return await browser.storage.sync.remove(key)
+}
+
+export async function getFromSyncStorage(key: string): Promise<Urls | undefined> {
+  const storage = await browser.storage.sync.get(key)
+
+  if (storage === undefined || storage.length === 0) {
+    return undefined
+  } else {
+    const urls: Urls = storage[key]
+    return urls
   }
-}
-
-export function removeFromSyncStorage(key: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    chrome.storage.sync.remove(key, () => {
-      resolve()
-    })
-  })
-}
-
-export function getFromSyncStorage(key: string): Promise<Urls> {
-  return new Promise((resolve, reject) => {
-    chrome.storage.sync.get(key, (result) => {
-      if (result === undefined || result.length === 0) {
-        reject()
-      } else {
-        const urls: Urls = result[key]
-        resolve(urls)
-      }
-    })
-  })
 }

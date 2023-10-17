@@ -20,22 +20,24 @@
  *   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  *   SOFTWARE.
  */
+/// <reference types="webextension-polyfill-ts" />
 
 import { Urls } from "./types"
+import { browser } from "webextension-polyfill-ts"
 
-export function omniboxListener(shortlinkName: string) {
-  chrome.storage.sync.get(shortlinkName, (result) => {
-    const urls: Urls = result[shortlinkName]
-    // Found shortlink, open all urls in new tabs.
-    if (urls !== undefined && urls.length > 0) {
-      openUrlsInTabs(urls)
-    }
-    // No shortlink found, do nothing.
-    else {
-      console.log(`Shortlink '${shortlinkName}' does not exist`)
-      return
-    }
-  })
+export async function omniboxListener(shortlinkName: string) {
+  const storage = await browser.storage.sync.get(shortlinkName)
+
+  const urls: Urls = storage[shortlinkName]
+  // Found shortlink, open all urls in new tabs.
+  if (urls !== undefined && urls.length > 0) {
+    openUrlsInTabs(urls)
+  }
+  // No shortlink found, do nothing.
+  else {
+    console.log(`Shortlink '${shortlinkName}' does not exist`)
+    return
+  }
 }
 
 export function openUrlsInTabs(urls: Urls) {

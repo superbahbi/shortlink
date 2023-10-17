@@ -37,6 +37,7 @@ import {
 import "./style.css"
 import { Delays, Messages, showToast } from "./toast"
 import { Shortlink, Urls } from "./types"
+import { browser } from "webextension-polyfill-ts"
 
 // Workaround for an enum w/ a method.
 export namespace EditMode {
@@ -68,7 +69,7 @@ function Popup() {
 
   // Listen to changes in storage.
   useEffect(() => {
-    chrome.storage.onChanged.addListener(() => {
+    browser.storage.onChanged.addListener(() => {
       getAllShortlinks().then((allShortlinks) => {
         setAllShortlinks(allShortlinks)
       })
@@ -265,7 +266,7 @@ async function handleEnterKey(
     case "debug": {
       // ::debug:: clear.
       if (command.arg === "clear") {
-        chrome.storage.sync.clear()
+        browser.storage.sync.clear()
       }
       // ::debug:: add <number>?
       else if (command.arg.startsWith("add")) {
