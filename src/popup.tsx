@@ -21,15 +21,17 @@
  *   SOFTWARE.
  */
 
-import React, { useEffect, useState } from "react"
+import React, { useEffect, useRef, useState } from "react"
 import { createRoot } from "react-dom/client"
 import { copyMultipleShortlinks } from "./clipboard"
 import { Command, convertUserInputTextIntoCommand, tryToParse } from "./command"
 import { generateRandomName } from "./friendly-random-name-generator"
 import {
+  copyAllShortlinksToClipboard,
   deleteMultipleShortlinks,
   editShortlink,
   getAllShortlinks,
+  importShortlinksFromJson,
   openMultipleShortlinks,
   saveToSyncStorage,
   tryToSaveShortlink,
@@ -37,6 +39,8 @@ import {
 import "./style.css"
 import { Delays, Messages, showToast } from "./toast"
 import { Shortlink, Urls } from "./types"
+
+const MAX_LENGTH_OF_URLS_TO_DISPLAY_ON_HOVER = 75
 
 // Workaround for an enum w/ a method.
 export namespace EditMode {
@@ -54,11 +58,16 @@ export namespace EditMode {
 }
 
 function Popup() {
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
   const [allShortlinks, setAllShortlinks] = useState<Shortlink[]>([])
   const [userInputText, setUserInputText] = useState<string>("")
   const [searchText, setSearchText] = useState<string>("")
   const [isEditMode, setIsEditMode] = useState<EditMode.Type>(EditMode.Disabled)
   const [currentUrls, setCurrentUrls] = useState<string>("")
+
+  const [showImportField, setShowImportField] = useState<boolean>(false)
+
   // List all shortlinks.
   useEffect(() => {
     getAllShortlinks().then((allShortlinks) => {
@@ -95,7 +104,32 @@ function Popup() {
         onChange={(event) => handleOnChange(event, setUserInputText)}
         onKeyDown={(event) => handleEnterKey(event, userInputText)}
       />
+      {showImportField ? showImportView() : showNormalView()}
+    </div>
+  )
 
+  async function handleJsonSave() {
+    let it = textareaRef.current
+    if (it !== null && it.value !== "") {
+      const textareaValue = it.value
+      await importShortlinksFromJson(textareaValue)
+      setShowImportField(false)
+    }
+  }
+
+  function showImportView(): React.ReactNode {
+    return (
+      <div className="editor-wrapper">
+        <textarea className="textarea-json" placeholder="Enter JSON here ..." ref={textareaRef} />
+        <button className="save-btn" onClick={handleJsonSave}>
+          📥 Save Shortlink
+        </button>
+      </div>
+    )
+  }
+
+  function showNormalView() {
+    return (
       <div id="links">
         {allShortlinks.length > 0 && (
           <input
@@ -134,8 +168,83 @@ function Popup() {
           Current: {currentUrls}
         </div>
       </div>
-    </div>
-  )
+    )
+  }
+
+  async function handleEnterKey(
+    event: React.KeyboardEvent<HTMLInputElement>,
+    rawUserInputText: string
+  ) {
+    if (event.key !== "Enter") return
+
+    console.log("typed: ", `'${rawUserInputText}'`)
+
+    const command: Command.Type = convertUserInputTextIntoCommand(rawUserInputText)
+
+    console.log("parsed command: ", command)
+
+    switch (command.kind) {
+      case "nothing": {
+        showToast(Messages.duplicateExists, Delays.default, "warning")
+        return
+      }
+      case "export": {
+        await copyAllShortlinksToClipboard()
+        return
+      }
+      case "import": {
+        setShowImportField(true)
+        return
+      }
+      case "save": {
+        tryToSaveShortlink(command.shortlinkName)
+        return
+      }
+      case "delete": {
+        await deleteMultipleShortlinks(command.shortlinkName, EditMode.Disabled)
+        return
+      }
+      case "go": {
+        await openMultipleShortlinks(command.shortlinkName)
+        return
+      }
+      case "copytoclipboard": {
+        await copyMultipleShortlinks(command.shortlinkNames)
+        return
+      }
+      case "debug": {
+        // ::debug:: clear.
+        if (command.arg === "clear") {
+          chrome.storage.sync.clear()
+        }
+        // ::debug:: add <number>?
+        else if (command.arg.startsWith("add")) {
+          let it = tryToParse("add", command.arg)
+          console.log("it: ", it)
+
+          let numberToAdd = 50
+          let delayMs = 10
+
+          if (it.kind === "some") {
+            let maybeNumber = parseInt(it.value)
+            if (!isNaN(maybeNumber)) {
+              numberToAdd = maybeNumber
+              console.log("numberToAdd: ", numberToAdd)
+            }
+          }
+
+          // Add numberToAdd shortlinks here for testing using tryToSaveShortlink function.
+          for (let i = 0; i < numberToAdd; i++) {
+            let randomName = generateRandomName() + "-" + i
+            await saveToSyncStorage(randomName, ["https://r3bl.com/?q=" + i])
+            // Wait for delayMs, to prevent Chrome from throttling this API call.
+            await new Promise((resolve) => setTimeout(resolve, delayMs))
+          }
+        }
+        return
+      }
+    }
+  }
 }
 
 function renderViewMode(
@@ -215,11 +324,15 @@ function handleOnChange(
   console.log("typedText:", typedText)
   setUserInputText(typedText)
 }
+
 function handleOnMouseEnter(
   urls: Urls[],
   setCurrentUrls: React.Dispatch<React.SetStateAction<string>>
 ) {
-  setCurrentUrls(urls.map((url) => truncateWithEllipsis(url.toString(), 90)).join(", "))
+  let urlsToDisplay = urls.map((url) => url.toString()).join(", ")
+  let truncatedUrls = truncateWithEllipsis(urlsToDisplay, MAX_LENGTH_OF_URLS_TO_DISPLAY_ON_HOVER)
+  console.log("truncatedUrls: ", truncatedUrls)
+  setCurrentUrls(truncatedUrls)
 }
 
 function truncateWithEllipsis(str: string, maxLength: number): string {
@@ -227,73 +340,6 @@ function truncateWithEllipsis(str: string, maxLength: number): string {
     return str
   }
   return `${str.slice(0, maxLength - 3)}...`
-}
-
-async function handleEnterKey(
-  event: React.KeyboardEvent<HTMLInputElement>,
-  rawUserInputText: string
-) {
-  if (event.key !== "Enter") return
-
-  console.log("typed: ", `'${rawUserInputText}'`)
-
-  const command: Command.Type = convertUserInputTextIntoCommand(rawUserInputText)
-
-  console.log("parsed command: ", command)
-
-  switch (command.kind) {
-    case "nothing": {
-      showToast(Messages.duplicateExists, Delays.default, "warning")
-      return
-    }
-    case "save": {
-      tryToSaveShortlink(command.shortlinkName)
-      return
-    }
-    case "delete": {
-      await deleteMultipleShortlinks(command.shortlinkName, EditMode.Disabled)
-      return
-    }
-    case "go": {
-      await openMultipleShortlinks(command.shortlinkName)
-      return
-    }
-    case "copytoclipboard": {
-      await copyMultipleShortlinks(command.shortlinkNames)
-      return
-    }
-    case "debug": {
-      // ::debug:: clear.
-      if (command.arg === "clear") {
-        chrome.storage.sync.clear()
-      }
-      // ::debug:: add <number>?
-      else if (command.arg.startsWith("add")) {
-        let it = tryToParse("add", command.arg)
-        console.log("it: ", it)
-
-        let numberToAdd = 50
-        let delayMs = 10
-
-        if (it.kind === "some") {
-          let maybeNumber = parseInt(it.value)
-          if (!isNaN(maybeNumber)) {
-            numberToAdd = maybeNumber
-            console.log("numberToAdd: ", numberToAdd)
-          }
-        }
-
-        // Add numberToAdd shortlinks here for testing using tryToSaveShortlink function.
-        for (let i = 0; i < numberToAdd; i++) {
-          let randomName = generateRandomName() + "-" + i
-          await saveToSyncStorage(randomName, ["https://r3bl.com/?q=" + i])
-          // Wait for delayMs, to prevent Chrome from throttling this API call.
-          await new Promise((resolve) => setTimeout(resolve, delayMs))
-        }
-      }
-      return
-    }
-  }
 }
 
 function main() {
